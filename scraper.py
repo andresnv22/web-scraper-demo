@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -101,24 +102,32 @@ def clean(rows: list[dict]) -> pd.DataFrame:
 # ------------------------------------------------------------------ running
 def scrape(start_url: str, max_pages: int = 3, delay: float = 1.0, session: requests.Session | None = None) -> pd.DataFrame:
     """Follow the 'next' links from start_url, at most max_pages pages."""
-    session = session or requests.Session()
-    if not allowed_by_robots(start_url, session):
-        raise ScrapeError(f"robots.txt does not allow scraping {start_url}")
-    rows: list[dict] = []
-    url: str | None = start_url
-    pages = 0
-    while url and pages < max_pages:
-        html = fetch(url, session)
-        page_rows, url = parse_listing(html, url)
-        rows.extend(page_rows)
-        pages += 1
-        log.info("page %d: %d items (total %d)", pages, len(page_rows), len(rows))
-        if url and pages < max_pages:
-            time.sleep(delay)  # be polite: do not hammer the server
-    return clean(rows)
+    own_session = session is None
+    if own_session:
+        session = requests.Session()
+    try:
+        if not allowed_by_robots(start_url, session):
+            raise ScrapeError(f"robots.txt does not allow scraping {start_url}")
+        rows: list[dict] = []
+        url: str | None = start_url
+        pages = 0
+        while url and pages < max_pages:
+            html = fetch(url, session)
+            page_rows, url = parse_listing(html, url)
+            rows.extend(page_rows)
+            pages += 1
+            log.info("page %d: %d items (total %d)", pages, len(page_rows), len(rows))
+            if url and pages < max_pages:
+                time.sleep(delay)  # be polite: do not hammer the server
+        return clean(rows)
+    finally:
+        if own_session:
+            session.close()
 
 
 def save(df: pd.DataFrame, out_prefix: str) -> tuple[str, str]:
+    out_path = Path(out_prefix)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     xlsx, csv = f"{out_prefix}.xlsx", f"{out_prefix}.csv"
     df.to_excel(xlsx, index=False)
     df.to_csv(csv, index=False)
